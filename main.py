@@ -68,30 +68,38 @@ def handle_message(message):
     chat_id = message.chat.id
     preferred = get_preferred_lang(message)
 
-    # Indica que el bot está escribiendo
+    print(f"Mensaje recibido de {user_id}: {message.text}")
+    print(f"Configuración de idiomas: {user_lang}")
+
     bot.send_chat_action(chat_id, 'typing')
     
     if user_id not in user_lang or "native" not in user_lang[user_id]:
+        print(f"Usuario {user_id} necesita configuración")
         request_configuration(user_id, chat_id, preferred)
         return
 
     sender_native = user_lang[user_id].get("native", "en")
+    sender_destiny = user_lang[user_id].get("destiny", "en")  # Idioma de destino del remitente
     translated_messages = []
 
-    for uid, data in user_lang.items():
-        recipient_native = data.get("native", "en")  # Translate to the recipient's native language
-        if uid != user_id:  # Avoid translating for the sender
-            try:
-                if sender_native and recipient_native:
-                    translation = translate_text(message.text, origin_lang=sender_native, destiny_lang=recipient_native)
-                    translated_messages.append(f"{message.from_user.first_name} ({recipient_native}): {translation}")
-                else:
-                    bot.send_message(chat_id, f"Error: Missing language configuration for user {uid}.")
-            except Exception as e:
-                bot.send_message(chat_id, f"Translation error for user {uid}: {e}")
+    print(f"Traduciendo mensaje de {sender_native} a {sender_destiny}")
+
+    # Traducir mensaje para el remitente
+    try:
+        if sender_native != sender_destiny:  # Solo traducir si los idiomas son diferentes
+            translation = translate_text(message.text, origin_lang=sender_native, destiny_lang=sender_destiny)
+            print(f"Traducción exitosa a {sender_destiny}: {translation}")
+            translated_messages.append(f"{message.from_user.first_name} ({sender_destiny}): {translation}")
+        else:
+            print("El idioma nativo y de destino son iguales; no se realiza traducción.")
+    except Exception as e:
+        print(f"Error de traducción para el remitente: {e}")
 
     if translated_messages:
+        print(f"Mensajes traducidos: {translated_messages}")
         bot.send_message(chat_id, "\n".join(translated_messages))
+    else:
+        print("No se pudieron generar traducciones")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("native_"))
 def handle_native(call):
