@@ -13,7 +13,7 @@ Este proyecto es un bot de Telegram que traduce mensajes entre diferentes idioma
 - **Python 3.x**: Necesario para ejecutar el bot.
 - **Librerías adicionales**:
   - `python-telegram-bot`
-  - `google-translate`
+  - `google-genai`
   - `python-dotenv`
 
 ## Uso
