@@ -1,2 +1,28 @@
-.env
+# Entornos virtuales
+.venv/
+venv/
+
+# Base de Datos
 user_languages.json
+
+# Archivos de caché de Python
+*.pyc
+__pycache__/
+
+# Configuraciones específicas de la instancia
+instance/
+
+# Caché de pytest y cobertura de código
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Archivos y directorios de construcción
+dist/
+build/
+*.egg-info/
+
+# Configuraciones de editores y entornos de desarrollo
+.idea/
+.vscode/
+*.sublime-*
