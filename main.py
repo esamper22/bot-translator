@@ -1,28 +1,35 @@
 import os
 import json
-import asyncio
-from flask import Flask, request, jsonify, abort
+from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, Update
-from google_translate import translate_text  # Se asume que esta función es asíncrona
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from google_translate import translate_text
+import logging
 
-load_dotenv()
+logging.basicConfig(level=logging.DEBUG)
+
+# Especificando la ruta al archivo .env
+dotenv_path = os.path.join('bot-translator', '.env')
+load_dotenv(dotenv_path=dotenv_path)
 
 # Variables de entorno
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-WEBHOOK_TOKEN = os.getenv('WEBHOOK_TOKEN')  # Token para proteger la ruta del webhook
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+LANG_FILE = "bot-translator/user_languages.json"
 
 # Inicializamos el bot y la app Flask
-bot = telebot.TeleBot(TELEGRAM_TOKEN)
+bot = telebot.TeleBot(TELEGRAM_TOKEN, threaded=False)
 app = Flask(__name__)
 
-LANG_FILE = "user_languages.json"
+# Configurar URL del webhook
+webhook_url = 'https://sampere0111.pythonanywhere.com/webhook'
+bot.remove_webhook()
+bot.set_webhook(url=webhook_url)
+
 
 def load_languages():
     try:
-        with open(LANG_FILE, "r", encoding="utf-8") as file:
+        with open(LANG_FILE, "r") as file:
             data = file.read()
             return json.loads(data) if data.strip() else {}
     except (FileNotFoundError, json.JSONDecodeError):
@@ -32,10 +39,10 @@ def save_languages(data):
     with open(LANG_FILE, "w", encoding="utf-8") as file:
         json.dump(data, file, indent=4, ensure_ascii=False)
 
-# Cargamos los idiomas de los usuarios
+# Cargamos los idiomas de los usuarios desde el archivo JSON
 user_lang = load_languages()
 
-# Mensajes de configuración
+# Mensajes de configuración según idioma
 MESSAGES = {
     "set_native": {"en": "Select your native language:", "es": "Selecciona tu idioma nativo:"},
     "set_destiny": {"en": "Select the language you want to receive messages in:", "es": "Selecciona el idioma en el que deseas recibir los mensajes:"},
@@ -48,7 +55,7 @@ MESSAGES = {
     "bot_status": {"en": "Bot is online!", "es": "¡El bot está en línea!"}
 }
 
-# Opciones de idioma para botones
+# Opciones de idioma para botones según preferencia
 LANGUAGE_OPTIONS = {
     "en": [("English", "en"), ("Spanish", "es")],
     "es": [("Inglés", "en"), ("Español", "es")]
@@ -66,8 +73,6 @@ def request_configuration(user_id, chat_id, preferred):
         markup.add(InlineKeyboardButton(lang_name, callback_data=f"native_{lang_code}"))
     bot.send_message(chat_id, MESSAGES["set_native"][preferred], reply_markup=markup)
 
-# --- Handlers del bot ---
-
 @bot.message_handler(func=lambda message: message.text and message.text.strip(), content_types=['text'])
 def handle_message(message):
     global user_lang
@@ -80,9 +85,8 @@ def handle_message(message):
     print(f"Configuración de idiomas: {user_lang}")
 
     bot.send_chat_action(chat_id, 'typing')
-    
+
     if user_id not in user_lang or "native" not in user_lang[user_id]:
-        print(f"Usuario {user_id} necesita configuración")
         request_configuration(user_id, chat_id, preferred)
         return
 
@@ -90,24 +94,22 @@ def handle_message(message):
     sender_destiny = user_lang[user_id].get("destiny", "en")
     translated_messages = []
 
-    print(f"Traduciendo mensaje de {sender_native} a {sender_destiny}")
-
+    # Traducir mensaje para el remitente
     try:
-        if sender_native != sender_destiny:
-            # Se ejecuta la función asíncrona en un contexto síncrono
-            translation = asyncio.run(translate_text(message.text, origin_lang=sender_native, destiny_lang=sender_destiny))
-            print(f"Traducción exitosa a {sender_destiny}: {translation}")
+        if sender_native != sender_destiny:  # Solo traducir si los idiomas son diferentes
+            translation = translate_text(message.text, origin_lang=sender_native, destiny_lang=sender_destiny)
             translated_messages.append(f"{message.from_user.first_name} ({sender_destiny}): {translation}")
         else:
-            print("El idioma nativo y de destino son iguales; no se realiza traducción.")
+            bot.send_message(chat_id,"El idioma nativo y de destino son iguales; no se realiza traducción.")
+
     except Exception as e:
-        print(f"Error de traducción: {e}")
+        bot.send_message(chat_id,f"Error")
 
     if translated_messages:
-        print(f"Mensajes traducidos: {translated_messages}")
         bot.send_message(chat_id, "\n".join(translated_messages))
     else:
-        print("No se pudieron generar traducciones")
+        bot.send_message(chat_id, f"Error.")
+
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("native_"))
 def handle_native(call):
@@ -137,6 +139,7 @@ def handle_destiny(call):
     msg = MESSAGES["lang_configured"][preferred].format(native=user_lang[user_id]["native"], destiny=destiny_lang)
     bot.send_message(call.message.chat.id, msg)
 
+# Envía un mensaje al grupo indicando que el bot está en línea
 @bot.message_handler(commands=['start'])
 def start_message(message):
     chat_id = message.chat.id
@@ -145,28 +148,18 @@ def start_message(message):
 # --- Fin de Handlers ---
 
 # --- Rutas de Flask ---
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    if request.headers.get('Content-Type') == 'application/json':
+        update = telebot.types.Update.de_json(request.get_data().decode('UTF-8'))
+        bot.process_new_updates([update])
+        return jsonify({'status': 'ok'})
+    else:
+        return jsonify({'error': 'Tipo de contenido no válido'}), 400
 
-@app.route("/webhook/<token>", methods=["POST"])
-def webhook(token):
-    """
-    Endpoint para recibir actualizaciones de Telegram.
-    Se incluye el token en la URL para mayor seguridad.
-    """
-    if token != WEBHOOK_TOKEN:
-        abort(403, description="Token inválido")
-    update_data = request.get_json(force=True)
-    update = Update.de_json(update_data)
-    bot.process_new_updates([update])
-    return jsonify({"status": "ok"})
-
-@app.route("/status", methods=["GET"])
+@app.route("/", methods=["GET"])
 def status():
     """Endpoint para comprobar que la aplicación está en línea."""
     return jsonify({"status": "Bot is online!"})
 
 # --- Fin de Rutas ---
-
-if __name__ == "__main__":
-    # En PythonAnywhere, asegúrate de que el puerto esté configurado correctamente.
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
